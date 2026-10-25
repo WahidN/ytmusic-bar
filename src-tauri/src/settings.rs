@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, sync::Mutex};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
@@ -7,11 +7,15 @@ use tauri::{AppHandle, Manager};
 #[serde(default, rename_all = "camelCase")]
 pub struct Settings {
     pub show_in_notch: bool,
+    pub global_shortcut: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { show_in_notch: true }
+        Self {
+            show_in_notch: true,
+            global_shortcut: true,
+        }
     }
 }
 
@@ -27,7 +31,7 @@ pub fn load(app: &AppHandle) -> Settings {
         .unwrap_or_default()
 }
 
-pub fn save(app: &AppHandle, settings: &Settings) {
+fn save(app: &AppHandle, settings: &Settings) {
     let Some(path) = path(app) else {
         return;
     };
@@ -37,4 +41,11 @@ pub fn save(app: &AppHandle, settings: &Settings) {
     if let Ok(json) = serde_json::to_string_pretty(settings) {
         let _ = fs::write(path, json);
     }
+}
+
+pub fn update(app: &AppHandle, change: impl FnOnce(&mut Settings)) {
+    let state = app.state::<Mutex<Settings>>();
+    let mut settings = state.lock().unwrap();
+    change(&mut settings);
+    save(app, &settings);
 }

@@ -6,7 +6,6 @@ use std::sync::Mutex;
 use notch::Notch;
 use objc2::MainThreadMarker;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
 use tauri::{
     image::Image,
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
@@ -14,6 +13,7 @@ use tauri::{
     ActivationPolicy, AppHandle, Emitter, Manager, State, WebviewWindowBuilder, WindowEvent, Wry,
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_positioner::{Position, WindowExt};
 
 const TRAY_ID: &str = "main";
@@ -33,6 +33,11 @@ struct PlayPauseItem(MenuItem<Wry>);
 struct SettingsItems {
     show_in_notch: CheckMenuItem<Wry>,
     launch_at_login: CheckMenuItem<Wry>,
+    global_shortcut: CheckMenuItem<Wry>,
+}
+
+fn popover_shortcut() -> Shortcut {
+    Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER), Code::KeyM)
 }
 
 #[tauri::command]
@@ -91,7 +96,20 @@ fn toggle_island(app: &AppHandle) {
     if let Some(island) = app.get_webview_window("island") {
         let _ = if show { island.show() } else { island.hide() };
     }
-    settings::save(app, &Settings { show_in_notch: show });
+    settings::update(app, |settings| settings.show_in_notch = show);
+}
+
+fn toggle_global_shortcut(app: &AppHandle) {
+    let item = &app.state::<SettingsItems>().global_shortcut;
+    let shortcuts = app.global_shortcut();
+    let enabled = if item.is_checked().unwrap_or(false) {
+        shortcuts.register(popover_shortcut()).is_ok()
+    } else {
+        let _ = shortcuts.unregister(popover_shortcut());
+        false
+    };
+    let _ = item.set_checked(enabled);
+    settings::update(app, |settings| settings.global_shortcut = enabled);
 }
 
 fn toggle_launch_at_login(app: &AppHandle) {
@@ -129,6 +147,15 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _, event| {
+                    if event.state() == ShortcutState::Pressed {
+                        toggle_popover(app);
+                    }
+                })
+                .build(),
+        )
         .manage(Mutex::new(NowPlaying::default()))
         .invoke_handler(tauri::generate_handler![
             now_playing,
@@ -171,6 +198,15 @@ pub fn run() {
                 app.autolaunch().is_enabled().unwrap_or(false),
                 None::<&str>,
             )?;
+            let global_shortcut = CheckMenuItem::with_id(
+                app,
+                "global_shortcut",
+                "Sneltoets ⌃ ⌥ ⌘ M",
+                true,
+                settings.global_shortcut
+                    && app.global_shortcut().register(popover_shortcut()).is_ok(),
+                None::<&str>,
+            )?;
             let separator = PredefinedMenuItem::separator(app)?;
             let settings_separator = PredefinedMenuItem::separator(app)?;
             let quit = MenuItem::with_id(app, "quit", "Stop", true, None::<&str>)?;
@@ -183,12 +219,14 @@ pub fn run() {
                     &separator,
                     &show_in_notch,
                     &launch_at_login,
+                    &global_shortcut,
                     &settings_separator,
                     &quit,
                 ],
             )?;
             app.manage(PlayPauseItem(play_pause));
-            app.manage(SettingsItems { show_in_notch, launch_at_login });
+            app.manage(SettingsItems { show_in_notch, launch_at_login, global_shortcut });
+            app.manage(Mutex::new(settings));
 
             TrayIconBuilder::with_id(TRAY_ID)
                 .icon(Image::from_bytes(include_bytes!("../icons/tray.png"))?)
@@ -205,6 +243,7 @@ pub fn run() {
                     }
                     "show_in_notch" => toggle_island(app),
                     "launch_at_login" => toggle_launch_at_login(app),
+                    "global_shortcut" => toggle_global_shortcut(app),
                     "quit" => app.exit(0),
                     _ => {}
                 })
