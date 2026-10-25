@@ -10,6 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
@@ -24,6 +25,18 @@
         "resizable": false,
         "alwaysOnTop": true,
         "skipTaskbar": true
+      },
+      {
+        "label": "island",
+        "create": false,
+        "url": "index.html",
+        "transparent": true,
+        "decorations": false,
+        "resizable": false,
+        "skipTaskbar": true,
+        "acceptFirstMouse": true,
+        "shadow": false,
+        "visible": false
       }
     ],
     "security": {
