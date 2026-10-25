@@ -1,16 +1,19 @@
 mod notch;
+mod settings;
 
 use std::sync::Mutex;
 
 use notch::Notch;
 use objc2::MainThreadMarker;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use tauri::{
     image::Image,
-    menu::{Menu, MenuItem, PredefinedMenuItem},
+    menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     ActivationPolicy, AppHandle, Emitter, Manager, State, WebviewWindowBuilder, WindowEvent, Wry,
 };
+use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_positioner::{Position, WindowExt};
 
 const TRAY_ID: &str = "main";
@@ -26,6 +29,11 @@ struct NowPlaying {
 }
 
 struct PlayPauseItem(MenuItem<Wry>);
+
+struct SettingsItems {
+    show_in_notch: CheckMenuItem<Wry>,
+    launch_at_login: CheckMenuItem<Wry>,
+}
 
 #[tauri::command]
 fn now_playing(app: AppHandle, track: NowPlaying) {
@@ -65,13 +73,36 @@ fn set_island_size(app: AppHandle, notch: State<Notch>, width: f64, height: f64)
     }
 }
 
-fn create_island(app: &AppHandle, notch: Notch) -> tauri::Result<()> {
+fn create_island(app: &AppHandle, notch: Notch, show: bool) -> tauri::Result<()> {
     let island = WebviewWindowBuilder::from_config(app, &app.config().app.windows[1])?.build()?;
     notch::with_ns_window(&island, |window| {
         notch::float_above_menu_bar(window);
         notch::place(window, notch, notch.width, notch.height);
     });
-    island.show()
+    if show {
+        island.show()?;
+    }
+    Ok(())
+}
+
+// Het vinkje is bij een klik al omgezet, dus de nieuwe waarde lezen we eraf.
+fn toggle_island(app: &AppHandle) {
+    let show = app.state::<SettingsItems>().show_in_notch.is_checked().unwrap_or(true);
+    if let Some(island) = app.get_webview_window("island") {
+        let _ = if show { island.show() } else { island.hide() };
+    }
+    settings::save(app, &Settings { show_in_notch: show });
+}
+
+fn toggle_launch_at_login(app: &AppHandle) {
+    let item = &app.state::<SettingsItems>().launch_at_login;
+    let autolaunch = app.autolaunch();
+    let _ = if item.is_checked().unwrap_or(false) {
+        autolaunch.enable()
+    } else {
+        autolaunch.disable()
+    };
+    let _ = item.set_checked(autolaunch.is_enabled().unwrap_or(false));
 }
 
 fn run_media_action(app: &AppHandle, action: &str) {
@@ -97,6 +128,7 @@ fn toggle_popover(app: &AppHandle) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_positioner::init())
+        .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
         .manage(Mutex::new(NowPlaying::default()))
         .invoke_handler(tauri::generate_handler![
             now_playing,
@@ -112,19 +144,51 @@ pub fn run() {
                 .initialization_script(include_str!("bridge.js"))
                 .build()?;
 
+            let settings = settings::load(app.handle());
             let mtm = MainThreadMarker::new().ok_or("setup must run on the main thread")?;
-            if let Some(notch) = notch::find(mtm) {
+            let notch = notch::find(mtm);
+            if let Some(notch) = notch {
                 app.manage(notch);
-                create_island(app.handle(), notch)?;
+                create_island(app.handle(), notch, settings.show_in_notch)?;
             }
 
             let previous = MenuItem::with_id(app, "previous", "Vorige", true, None::<&str>)?;
             let play_pause = MenuItem::with_id(app, "play_pause", "Afspelen", true, None::<&str>)?;
             let next = MenuItem::with_id(app, "next", "Volgende", true, None::<&str>)?;
+            let show_in_notch = CheckMenuItem::with_id(
+                app,
+                "show_in_notch",
+                "Toon in notch",
+                notch.is_some(),
+                settings.show_in_notch,
+                None::<&str>,
+            )?;
+            let launch_at_login = CheckMenuItem::with_id(
+                app,
+                "launch_at_login",
+                "Start bij inloggen",
+                true,
+                app.autolaunch().is_enabled().unwrap_or(false),
+                None::<&str>,
+            )?;
             let separator = PredefinedMenuItem::separator(app)?;
+            let settings_separator = PredefinedMenuItem::separator(app)?;
             let quit = MenuItem::with_id(app, "quit", "Stop", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&previous, &play_pause, &next, &separator, &quit])?;
+            let menu = Menu::with_items(
+                app,
+                &[
+                    &previous,
+                    &play_pause,
+                    &next,
+                    &separator,
+                    &show_in_notch,
+                    &launch_at_login,
+                    &settings_separator,
+                    &quit,
+                ],
+            )?;
             app.manage(PlayPauseItem(play_pause));
+            app.manage(SettingsItems { show_in_notch, launch_at_login });
 
             TrayIconBuilder::with_id(TRAY_ID)
                 .icon(Image::from_bytes(include_bytes!("../icons/tray.png"))?)
@@ -139,6 +203,8 @@ pub fn run() {
                         let is_playing = app.state::<Mutex<NowPlaying>>().lock().unwrap().is_playing;
                         run_media_action(app, if is_playing { "pause" } else { "play" });
                     }
+                    "show_in_notch" => toggle_island(app),
+                    "launch_at_login" => toggle_launch_at_login(app),
                     "quit" => app.exit(0),
                     _ => {}
                 })
