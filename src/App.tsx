@@ -84,12 +84,12 @@ function Island({ notch }: { notch: Notch }) {
       {track && (
         <>
           <div className="compact" style={{ height: notch.height, paddingInline: inset }}>
-            <img className="compact-cover" src={track.artwork} alt="" />
+            <img className="compact-cover" src={track.artwork || undefined} alt="" />
             <Bars />
           </div>
           <div className="expanded" style={{ paddingTop: notch.height }}>
             <div className="track">
-              <img className="cover" src={track.artwork} alt="" />
+              <img className="cover" src={track.artwork || undefined} alt="" />
               <div className="meta">
                 <div className="title">{track.title}</div>
                 <div className="artist">{track.artist}</div>
