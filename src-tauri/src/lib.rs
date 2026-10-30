@@ -102,14 +102,18 @@ fn toggle_island(app: &AppHandle) {
 fn toggle_global_shortcut(app: &AppHandle) {
     let item = &app.state::<SettingsItems>().global_shortcut;
     let shortcuts = app.global_shortcut();
-    let enabled = if item.is_checked().unwrap_or(false) {
+    let wanted = item.is_checked().unwrap_or(false);
+    let enabled = if wanted {
         shortcuts.register(popover_shortcut()).is_ok()
     } else {
         let _ = shortcuts.unregister(popover_shortcut());
         false
     };
     let _ = item.set_checked(enabled);
-    settings::update(app, |settings| settings.global_shortcut = enabled);
+    // Mislukt registreren is geen keuze van de gebruiker, dus dan blijft de opgeslagen wens staan.
+    if enabled == wanted {
+        settings::update(app, |settings| settings.global_shortcut = enabled);
+    }
 }
 
 fn toggle_launch_at_login(app: &AppHandle) {
