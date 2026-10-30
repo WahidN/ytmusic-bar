@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "island",
+  "description": "Lets the notch island read now playing info and control playback",
+  "windows": ["island"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "allow-get-now-playing",
+    "allow-get-notch",
+    "allow-media-action",
+    "allow-set-island-size"
+  ]
+}
