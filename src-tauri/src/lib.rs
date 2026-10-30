@@ -10,11 +10,11 @@ use tauri::{
     image::Image,
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    ActivationPolicy, AppHandle, Emitter, Manager, State, WebviewWindowBuilder, WindowEvent, Wry,
+    ActivationPolicy, AppHandle, Emitter, Manager, PhysicalPosition, State, WebviewWindow,
+    WebviewWindowBuilder, WindowEvent, Wry,
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
-use tauri_plugin_positioner::{Position, WindowExt};
 
 const TRAY_ID: &str = "main";
 const MEDIA_ACTIONS: [&str; 4] = ["play", "pause", "nexttrack", "previoustrack"];
@@ -129,6 +129,17 @@ fn run_media_action(app: &AppHandle, action: &str) {
     }
 }
 
+// Bij elke keer openen opnieuw opvragen: de sneltoets kan komen voordat je het icoon aanraakt, en het icoon kan verschuiven.
+fn move_under_tray(app: &AppHandle, window: &WebviewWindow) -> tauri::Result<()> {
+    let Some(rect) = app.tray_by_id(TRAY_ID).map(|tray| tray.rect()).transpose()?.flatten() else {
+        return Ok(());
+    };
+    let tray = rect.position.to_physical::<f64>(1.0);
+    let tray_width = rect.size.to_physical::<f64>(1.0).width;
+    let width = window.outer_size()?.width as f64;
+    window.set_position(PhysicalPosition::new(tray.x + (tray_width - width) / 2.0, tray.y))
+}
+
 fn toggle_popover(app: &AppHandle) {
     let Some(window) = app.get_webview_window("main") else {
         return;
@@ -136,7 +147,7 @@ fn toggle_popover(app: &AppHandle) {
     if window.is_visible().unwrap_or(false) {
         let _ = window.hide();
     } else {
-        let _ = window.move_window(Position::TrayBottomCenter);
+        let _ = move_under_tray(app, &window);
         let _ = window.show();
         let _ = window.set_focus();
     }
@@ -145,7 +156,6 @@ fn toggle_popover(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -248,7 +258,6 @@ pub fn run() {
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
-                    tauri_plugin_positioner::on_tray_event(tray.app_handle(), &event);
                     if let TrayIconEvent::Click {
                         button: MouseButton::Left,
                         button_state: MouseButtonState::Up,
